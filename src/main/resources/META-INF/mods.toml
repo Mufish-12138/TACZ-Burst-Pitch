@@ -1,0 +1,33 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="AutoMods"
+description='''
+TACZ Burst Pitch Falloff: while a burst weapon keeps firing, the opening shot plays at the normal gun sound and every following shot goes through an early, mid and late burst phase that lowers its pitch and shapes its volume. After the burst is broken, the next shot starts over at the normal sound. TaCZ's own random gunshot pitch (roughly +/-6%) is replaced by a configurable smaller range (default +/-2%). Every client applies the same shaping to the shots it hears, including shots fired by other players. Client-side addon for Timeless and Classics Zero (TaCZ).
+'''
+
+[[dependencies.${mod_id}]]
+    modId="forge"
+    mandatory=true
+    versionRange="[${forge_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[${minecraft_version}]"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="tacz"
+    mandatory=true
+    versionRange="${tacz_version_range}"
+    ordering="AFTER"
+    side="BOTH"
