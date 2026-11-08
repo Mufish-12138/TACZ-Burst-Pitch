@@ -109,7 +109,11 @@ public final class GunSoundPitchHandler {
         // per round, so the sound count already is the bullet count. It returns -1 for every other
         // fire mode, which keeps the original timing rule.
         int burstShotCount = TaczBridge.burstShotCount(gunStack);
-        int shotIndex = BurstPitchTracker.registerShot(shooter, soundId, burstShotCount);
+        // TaCZ 1.2.0 lets a gun pack declare a fixed pitch for its shot sound. When it does, that
+        // pitch is the reference the whole burst falls off from; otherwise the tracker uses TaCZ's
+        // average random pitch. NaN means "the pack did not declare one".
+        float nominalPitch = TaczBridge.nominalShotPitch(gunStack, soundId);
+        int shotIndex = BurstPitchTracker.registerShot(shooter, soundId, burstShotCount, nominalPitch);
 
         // Read the magazine count here as well. For the local player the shot is client-predicted,
         // so the client has not decremented the magazine yet: this is the count *before* the shot,
@@ -174,7 +178,7 @@ public final class GunSoundPitchHandler {
      */
     private static void limitConcurrentShots(Minecraft minecraft, Player shooter, ResourceLocation soundId,
                                              SoundInstance shifted) {
-        int limit = PitchShiftConfig.MAX_CONCURRENT_SHOTS.get();
+        int limit = PitchShiftConfig.MAX_SIMULTANEOUS_SHOTS.get();
         if (limit <= 0) {
             return;
         }

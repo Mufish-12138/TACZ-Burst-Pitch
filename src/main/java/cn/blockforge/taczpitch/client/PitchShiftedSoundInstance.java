@@ -80,6 +80,12 @@ public class PitchShiftedSoundInstance implements SoundInstance {
 
     @Override
     public float getVolume() {
+        // 和下面 getPitch() 同理：1.20.1 的 AbstractSoundInstance#getVolume() 会去乘内部
+        // Sound 字段（音量/音高在 Sound 里是 SampledFloat），解析完成前读它会空指针。
+        // 别的模组（音效物理、光影的声音处理等）可能提前来读，这里一律先挡住。
+        if (delegate.getSound() == null) {
+            return 1.0F;
+        }
         if (Float.isNaN(volumeFactor)) {
             volumeFactor = BurstPitchTracker.volumeFor(shotIndex, remainingAmmo);
         }

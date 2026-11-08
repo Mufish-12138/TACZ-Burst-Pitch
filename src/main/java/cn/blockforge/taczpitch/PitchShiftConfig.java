@@ -32,7 +32,7 @@ public final class PitchShiftConfig {
     public static final ForgeConfigSpec.DoubleValue LATE_VOLUME_INCREASE_PER_SHOT;
     public static final ForgeConfigSpec.IntValue BURST_RESET_MILLIS;
     public static final ForgeConfigSpec.BooleanValue AFFECT_SILENCED;
-    public static final ForgeConfigSpec.IntValue MAX_CONCURRENT_SHOTS;
+    public static final ForgeConfigSpec.IntValue MAX_SIMULTANEOUS_SHOTS;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -128,12 +128,14 @@ public final class PitchShiftConfig {
                         "装了消音器时是否也做同样的处理。")
                 .define("affectSilencedShots", true);
 
-        MAX_CONCURRENT_SHOTS = builder
-                .comment("Maximum number of overlapping shot sounds for the same gun and shooter.",
-                        "Default 3, 0 disables the limit.",
-                        "同一把枪、同一个射手同时最多叠几个枪声，超过就把最早的那个掐掉。",
-                        "默认 3，改成 0 表示不做限制。")
-                .defineInRange("maxConcurrentShootSounds", 3, 0, 64);
+        MAX_SIMULTANEOUS_SHOTS = builder
+                .comment("How many gunshot sounds of the same shooter and the same gun may sit in the",
+                        "sound engine at the same time. The oldest is stopped to make room for the newest,",
+                        "so every shot is still heard and only the tail of an older one is cut.",
+                        "0 disables the limit. TaCZ itself allows 4, and the default here matches it.",
+                        "同一名射手、同一把枪最多允许几条枪声同时待在声音引擎里，超过就把最早的那条掐掉，",
+                        "给最新的一条让位。0 表示不限制。TaCZ 自己用 4，这里默认和它保持一致。")
+                .defineInRange("maxSimultaneousGunSounds", 4, 0, 64);
 
         builder.pop();
         SPEC = builder.build();

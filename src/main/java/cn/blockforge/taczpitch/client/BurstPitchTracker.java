@@ -74,6 +74,13 @@ public final class BurstPitchTracker {
         /** Actual pitch of this burst's first shot, recorded when it plays. Base for every later shot. */
         private float basePitch = Float.NaN;
         /**
+         * 枪包给这个枪声写死的音高（TaCZ 1.2.0 起可以写），没有时是 NaN。
+         *
+         * <p>只影响「随机音高覆盖」模式：有它就围着它取整段连射的基准音高，没有才退回 TaCZ
+         * 自带随机音高的中值。这样新版枪包自己设计的枪声音高不会被本模组抹平。</p>
+         */
+        private float nominalPitch = Float.NaN;
+        /**
          * For a BURST gun, how many rounds one trigger pull fires. -1 means the previous shot was not
          * a BURST shot (or the count could not be read).
          *
@@ -115,8 +122,10 @@ public final class BurstPitchTracker {
      *
      * @param burstShotCount rounds one trigger pull fires when the gun is in BURST mode; -1 for
      *                       everything else
+     * @param nominalPitch the gun pack's own fixed pitch for this shot sound (TaCZ 1.2.0's
+     *                     {@code SoundData.pitch}); {@link Float#NaN} when the pack does not set one
      */
-    public static int registerShot(Player player, ResourceLocation soundId, int burstShotCount) {
+    public static int registerShot(Player player, ResourceLocation soundId, int burstShotCount, float nominalPitch) {
         long now = System.currentTimeMillis();
         long resetFloor = Math.max(50L, PitchShiftConfig.BURST_RESET_MILLIS.get());
 
@@ -131,6 +140,7 @@ public final class BurstPitchTracker {
             burst.lastGapMillis = 0L;
             burst.shotIndex = 0;
             burst.basePitch = Float.NaN;
+            burst.nominalPitch = nominalPitch;
             burst.burstShotCount = burstShotCount;
             BURSTS.put(player.getUUID(), burst);
             return 0;
@@ -160,6 +170,7 @@ public final class BurstPitchTracker {
         }
 
         burst.burstShotCount = burstShotCount;
+        burst.nominalPitch = nominalPitch;
         burst.lastSoundId = soundId;
         burst.lastGapMillis = Math.min(gap, resetFloor);
         burst.lastShotMillis = now;
@@ -174,7 +185,9 @@ public final class BurstPitchTracker {
      * <p>Two modes:</p>
      * <ul>
      *   <li><b>Random-pitch override on</b> (the default): TaCZ's own random pitch is discarded and
-     *       the burst is rebuilt around TaCZ's average pitch (0.9625). The {@code randomPitchRange}
+     *       the burst is rebuilt around a fixed reference pitch - the gun pack's own pitch when it
+     *       declares one (TaCZ 1.2.0+), otherwise TaCZ's average pitch (0.9625). The
+     *       {@code randomPitchRange}
      *       offset is drawn <b>once per burst</b>, at its first shot, and stored as that burst's base
      *       pitch: later shots are {@code base * shape}, where {@code shape} is the early / mid /
      *       late falloff. So the whole burst is one "sampled" sound - just like a single audio
@@ -199,7 +212,8 @@ public final class BurstPitchTracker {
 
         double reference;
         if (overrideRandomPitch) {
-            // Do not read TaCZ's random pitch at all: rebuild it around TaCZ's average.
+            // Do not read TaCZ's random pitch at all: rebuild it around TaCZ's average pitch, or
+            // around the pitch the gun pack itself declared (TaCZ 1.2.0+), whichever we have.
             if (sameBurst && !Float.isNaN(burst.basePitch)) {
                 // A later shot of the burst reuses the pitch sampled by its first shot.
                 reference = burst.basePitch;
@@ -207,7 +221,10 @@ public final class BurstPitchTracker {
                 // First shot of the burst: take the one random sample that the whole burst plays at.
                 // If the first shot's sound never resolved (e.g. a listener joined mid-burst and this
                 // is the first shot they hear), sample here so the burst still gets a stable base.
-                double sampled = TACZ_NOMINAL_PITCH * randomPitchJitter();
+                float nominal = sameBurst && !Float.isNaN(burst.nominalPitch)
+                        ? burst.nominalPitch
+                        : (float) TACZ_NOMINAL_PITCH;
+                double sampled = nominal * randomPitchJitter();
                 if (sameBurst) {
                     burst.basePitch = (float) sampled;
                 }

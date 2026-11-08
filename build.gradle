@@ -1,17 +1,36 @@
 plugins { id 'java'; id 'net.minecraftforge.gradle' version '[6.0,6.2)' }
-version = '1.0.0-r11'
+version = '1.2.0-r30'
+// 上面这行的 -rN 是平台每轮自动加的「构建计数」，只用来区分构建，不进 mods.toml、也不进 jar 名。
+// 玩家看到的版本号固定为下面这个 1.2.0（不带 r 号）。
+ext.modVersion = '1.2.0'
+ext.author = 'Mufish'
 group = 'cn.blockforge.taczpitch'
-description = 'Client-side addon for Timeless and Classics Zero (TaCZ): burst pitch and volume falloff, a configurable replacement for TaCZ\'s own random gunshot pitch, also applied to shots heard from other players.'
+description = 'Client-side addon for Timeless and Classics Zero (TaCZ): burst pitch and volume falloff, a configurable replacement for TaCZ\'s own random gunshot pitch, also applied to shots heard from other players. Author: Mufish.'
 base { archivesName = 'tacz_burst_pitch' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 minecraft { mappings channel: 'official', version: '1.20.1' }
 dependencies { minecraft 'net.minecraftforge:forge:1.20.1-47.4.0' }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 processResources {
-    def props = [mod_id: 'tacz_burst_pitch', mod_name: 'TACZ Burst Pitch Falloff', mod_version: project.version,
+    def props = [mod_id: 'tacz_burst_pitch', mod_name: 'TACZ Burst Pitch Falloff', mod_version: project.ext.modVersion,
+                 mod_author: project.ext.author,
                  minecraft_version: '1.20.1', forge_version: '47.4.0', tacz_version_range: '[1.0,)']
     inputs.properties props
     filteringCharset = 'UTF-8'
     filesMatching('META-INF/mods.toml') { expand props }
+}
+
+// 作者/版本也写进 jar 的清单和文件名，方便从 jar 本身看出是谁做的、哪个版本。
+jar {
+    archiveVersion = project.ext.modVersion
+    manifest {
+        attributes(
+                'Implementation-Title': 'TACZ Burst Pitch Falloff',
+                'Implementation-Version': project.ext.modVersion,
+                'Implementation-Vendor': project.ext.author,
+                'Specification-Title': 'tacz_burst_pitch',
+                'Specification-Version': project.ext.modVersion
+        )
+    }
 }
 jar.finalizedBy('reobfJar')

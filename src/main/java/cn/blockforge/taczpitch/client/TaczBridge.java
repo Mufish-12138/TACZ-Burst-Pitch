@@ -12,8 +12,6 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.item.ItemStack;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 /**
  * 与 TaCZ 打交道的唯一入口。
@@ -22,8 +20,12 @@ import org.apache.logging.log4j.Logger;
  * 不能把 TaCZ 作为编译依赖。用到的全部是 TaCZ 自己的类名、方法名和字段名，
  * 它们不受 Minecraft 混淆映射影响，所以在正式游戏里按字面量查找同样有效。</p>
  *
- * <p>如果 TaCZ 不存在或版本差异导致某个名字找不到，这里会整体关闭并只记录一条日志，
+ * <p>如果 TaCZ 不存在或版本差异导致某个名字找不到，这里会整体关闭，
  * 游戏和 TaCZ 本身都不会受影响。</p>
+ *
+ * <p><b>本模组不往 logs 里写任何东西。</b>所以这里所有的失败分支都是静默的：
+ * 找不到接口就当作「不改音效」，读不到数据就退回默认行为。日志里看不到本模组的任何行，
+ * 这是刻意的——它只是个听感修饰，不该刷玩家的日志。</p>
  */
 public final class TaczBridge {
 
@@ -43,11 +45,14 @@ public final class TaczBridge {
     private static final String CLASS_BURST_DATA = "com.tacz.guns.resource.pojo.data.gun.BurstData";
     private static final String CLASS_CLIENT_GUN_INDEX = "com.tacz.guns.client.resource.index.ClientGunIndex";
     private static final String CLASS_COMMON_GUN_INDEX = "com.tacz.guns.resource.index.CommonGunIndex";
+    /**
+     * TaCZ 1.2.0 起，{@code GunDisplayInstance#getSounds} 不再返回音效 id，而是返回这个包装对象：
+     * 真正的 id 在 {@code getSound()} 里，另外还带音高/音量的固定值和随机幅度。
+     */
+    private static final String CLASS_SOUND_DATA = "com.tacz.guns.client.resource.pojo.display.SoundData";
 
     /** 枪械 ItemStack 里存「弹匣当前余弹」的 NBT 标签名（TaCZ 1.20.1）。 */
     private static final String AMMO_COUNT_TAG = "GunCurrentAmmoCount";
-
-    private static final Logger LOGGER = LogManager.getLogger("tacz_burst_pitch");
 
     private static boolean resolved;
     private static boolean ready;
@@ -71,6 +76,11 @@ public final class TaczBridge {
     private static Method commonGetGunDataMethod;
     private static Method getBurstDataMethod;
     private static Method getBurstCountMethod;
+    /** TaCZ 1.2.0 的 SoundData 反射句柄；旧版 TaCZ 没有这个类，全部为 null 时走旧路径。 */
+    private static Class<?> soundDataClass;
+    private static Method soundDataGetSoundMethod;
+    private static Method soundDataHasPitchMethod;
+    private static Method soundDataGetPitchMethod;
     /** Every SoundManager key whose value is a "shoot" sound (covers 1p and 3p variants). */
     private static List<String> shootSoundKeys = List.of("shoot");
     /** Every SoundManager key whose value is a "silenced shoot" sound (covers 1p and 3p variants). */
@@ -130,8 +140,23 @@ public final class TaczBridge {
             silencedSoundKeys = List.copyOf(silenceKeys);
             ready = true;
         } catch (Throwable throwable) {
+            // TaCZ 不在、或者这个版本的类名对不上：整体关闭，静默不改任何枪声。
             ready = false;
-            LOGGER.warn("[TaCZ 连发音效衰减] 找不到 TaCZ 的音效接口，本模组不会改动任何枪声。", throwable);
+        }
+
+        // TaCZ 1.2.0 把枪声音效改成了 SoundData 包装对象（音效 id + 固定音高/音量 + 随机幅度）。
+        // 这里单独解析它：有就用新路径，没有（旧版 TaCZ）就还按原来的「直接返回音效 id」处理。
+        try {
+            soundDataClass = Class.forName(CLASS_SOUND_DATA);
+            soundDataGetSoundMethod = soundDataClass.getMethod("getSound");
+            soundDataHasPitchMethod = soundDataClass.getMethod("hasPitch");
+            soundDataGetPitchMethod = soundDataClass.getMethod("getPitch");
+        } catch (Throwable ignored) {
+            // 旧版 TaCZ 没有这个类，属正常情况。
+            soundDataClass = null;
+            soundDataGetSoundMethod = null;
+            soundDataHasPitchMethod = null;
+            soundDataGetPitchMethod = null;
         }
 
         // 弹匣余弹接口单独解析：即使版本不同导致它失效，音调部分仍然照常工作。
@@ -141,10 +166,10 @@ public final class TaczBridge {
             getCurrentAmmoCountMethod = iGun.getMethod("getCurrentAmmoCount", ItemStack.class);
             ammoReady = true;
         } catch (Throwable throwable) {
+            // 读不到就静默跳过「弹匣最后几发」规则，音调照常。
             ammoReady = false;
             getIGunOrNullMethod = null;
             getCurrentAmmoCountMethod = null;
-            LOGGER.warn("[TaCZ 连发音效衰减] 读不到 TaCZ 的弹匣余弹接口，音量逻辑会忽略「弹匣最后几发」规则。", throwable);
         }
 
         // 连发（BURST）参数也单独解析：TaCZ 对 BURST 枪是「一次扣扳机连射固定发数」，
@@ -164,6 +189,7 @@ public final class TaczBridge {
             commonGetGunDataMethod = Class.forName(CLASS_COMMON_GUN_INDEX).getMethod("getGunData");
             burstReady = true;
         } catch (Throwable throwable) {
+            // 读不到就静默当作非 BURST，保持旧行为。
             burstReady = false;
             getFireModeMethod = null;
             getGunIdMethod = null;
@@ -173,7 +199,6 @@ public final class TaczBridge {
             commonGetGunDataMethod = null;
             getBurstDataMethod = null;
             getBurstCountMethod = null;
-            LOGGER.warn("[TaCZ 连发音效衰减] 读不到 TaCZ 的连发（BURST）参数接口，连发枪会按普通连射处理。", throwable);
         }
     }
 
@@ -209,6 +234,10 @@ public final class TaczBridge {
         commonGetGunDataMethod = null;
         getBurstDataMethod = null;
         getBurstCountMethod = null;
+        soundDataClass = null;
+        soundDataGetSoundMethod = null;
+        soundDataHasPitchMethod = null;
+        soundDataGetPitchMethod = null;
         shootSoundKeys = List.of("shoot");
         silencedSoundKeys = List.of("silence");
     }
@@ -246,23 +275,15 @@ public final class TaczBridge {
             return NOT_A_SHOT;
         }
         try {
-            Object displayOptional = getGunDisplayMethod.invoke(null, gunStack);
-            if (!(displayOptional instanceof Optional<?> optional)) {
-                return NOT_A_SHOT;
-            }
-            Object display = optional.orElse(null);
+            Object display = gunDisplay(gunStack);
             if (display == null) {
                 return NOT_A_SHOT;
             }
-            for (String key : shootSoundKeys) {
-                if (matchesSound(display, key, soundId)) {
-                    return NORMAL_SHOT;
-                }
+            if (matchingSoundKey(display, shootSoundKeys, soundId) != null) {
+                return NORMAL_SHOT;
             }
-            for (String key : silencedSoundKeys) {
-                if (matchesSound(display, key, soundId)) {
-                    return SILENCED_SHOT;
-                }
+            if (matchingSoundKey(display, silencedSoundKeys, soundId) != null) {
+                return SILENCED_SHOT;
             }
             return NOT_A_SHOT;
         } catch (Throwable throwable) {
@@ -271,28 +292,119 @@ public final class TaczBridge {
     }
 
     /**
-     * Compares one gun-display sound key against a sound resource name.
+     * 枪包给这一发枪声写死的音高（TaCZ 1.2.0 的 {@code SoundData.pitch}）。
      *
-     * <p>Depending on the TaCZ version {@code GunDisplayInstance.getSounds(String)} may hand back
-     * a {@link ResourceLocation}, a {@link SoundEvent} or a plain string, so all three shapes are
-     * accepted. A key the gun does not define simply returns null and counts as no match.</p>
+     * <p>新版 TaCZ 允许枪包给每个音效单独指定音高和随机幅度。如果枪包写了固定音高，
+     * 本模组的「随机音高覆盖」就用它当作整段连射的基准，而不是硬套 TaCZ 自带的 0.9625 中值，
+     * 这样枪包自己设计的音色不会被本模组抹掉。枪包没写（或旧版 TaCZ）时返回 NaN，调用方按老规则处理。</p>
+     *
+     * @return 枪包写死的音高；没有或读不到时返回 {@link Float#NaN}
      */
-    private static boolean matchesSound(Object display, String key, ResourceLocation soundId) {
-        try {
-            Object result = getSoundsMethod.invoke(display, key);
-            if (result == null) {
-                return false;
-            }
-            if (result instanceof ResourceLocation location) {
-                return soundId.equals(location);
-            }
-            if (result instanceof SoundEvent event) {
-                return soundId.equals(event.getLocation());
-            }
-            return soundId.toString().equals(result.toString());
-        } catch (Throwable throwable) {
-            return false;
+    public static float nominalShotPitch(ItemStack gunStack, ResourceLocation soundId) {
+        resolve();
+        if (!ready || soundDataClass == null || gunStack == null || gunStack.isEmpty() || soundId == null) {
+            return Float.NaN;
         }
+        try {
+            Object display = gunDisplay(gunStack);
+            if (display == null) {
+                return Float.NaN;
+            }
+            Object value = matchingSoundKey(display, shootSoundKeys, soundId);
+            if (value == null) {
+                value = matchingSoundKey(display, silencedSoundKeys, soundId);
+            }
+            if (value == null || !soundDataClass.isInstance(value)) {
+                return Float.NaN;
+            }
+            Object hasPitch = soundDataHasPitchMethod.invoke(value);
+            if (!(hasPitch instanceof Boolean flag) || !flag) {
+                return Float.NaN;
+            }
+            Object pitch = soundDataGetPitchMethod.invoke(value);
+            if (pitch instanceof Float fixed && fixed > 0.0F) {
+                return fixed;
+            }
+        } catch (Throwable ignored) {
+            // 读不到就当枪包没写，退回 TaCZ 的平均音高。
+        }
+        return Float.NaN;
+    }
+
+    /** 取这把枪的显示数据（模型、音效、贴图都在里面）；拿不到返回 null。 */
+    private static Object gunDisplay(ItemStack gunStack) {
+        try {
+            Object displayOptional = getGunDisplayMethod.invoke(null, gunStack);
+            if (displayOptional instanceof Optional<?> optional) {
+                return optional.orElse(null);
+            }
+        } catch (Throwable ignored) {
+            // TaCZ 还没加载完或接口对不上时一律当作取不到。
+        }
+        return null;
+    }
+
+    /**
+     * 在给定的几个音效键里找出哪一个和正在播放的音效 id 相同。
+     *
+     * @return 命中的原始值（旧版是 {@link ResourceLocation}，1.2.0 起是 {@code SoundData}）；
+     *         没有命中返回 null
+     */
+    private static Object matchingSoundKey(Object display, List<String> keys, ResourceLocation soundId) {
+        for (String key : keys) {
+            Object value = soundValue(display, key);
+            if (soundId.equals(soundLocation(value))) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    /** 调 {@code GunDisplayInstance#getSounds(String)}；这个键没定义或调用失败时返回 null。 */
+    private static Object soundValue(Object display, String key) {
+        try {
+            return getSoundsMethod.invoke(display, key);
+        } catch (Throwable throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * 把 {@code getSounds} 的返回值归一化成音效 id。
+     *
+     * <p>不同 TaCZ 版本的形状不一样，官方一直以来换了两次：</p>
+     * <ul>
+     *   <li>旧版：直接是 {@link ResourceLocation}；</li>
+     *   <li>中间某些版本：{@link SoundEvent}；</li>
+     *   <li>1.2.0 起：{@code SoundData} 包装对象，真正的 id 在 {@code getSound()} 里。</li>
+     * </ul>
+     * <p>字符串形态也顺手兼容。都不认识时返回 null，当作「不是这个音效」。</p>
+     */
+    private static ResourceLocation soundLocation(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof ResourceLocation location) {
+            return location;
+        }
+        if (value instanceof SoundEvent event) {
+            return event.getLocation();
+        }
+        if (soundDataClass != null && soundDataClass.isInstance(value)) {
+            try {
+                return soundLocation(soundDataGetSoundMethod.invoke(value));
+            } catch (Throwable throwable) {
+                return null;
+            }
+        }
+        if (value instanceof CharSequence text) {
+            try {
+                return ResourceLocation.tryParse(text.toString());
+            } catch (Throwable throwable) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**
@@ -418,7 +530,8 @@ public final class TaczBridge {
         }
     }
 
-    private static int ammoCountFromNbt(ItemStack gunStack) {        try {
+    private static int ammoCountFromNbt(ItemStack gunStack) {
+        try {
             CompoundTag tag = gunStack.getTag();
             if (tag != null && tag.contains(AMMO_COUNT_TAG, Tag.TAG_INT)) {
                 return tag.getInt(AMMO_COUNT_TAG);
